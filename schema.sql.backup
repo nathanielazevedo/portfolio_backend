@@ -1,0 +1,65 @@
+-- Create battles table
+CREATE TABLE battles (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  room_id VARCHAR(255) NOT NULL,
+  status VARCHAR(50) DEFAULT 'waiting' CHECK (status IN ('waiting', 'active', 'completed', 'cancelled')),
+  started_at TIMESTAMP WITH TIME ZONE,
+  completed_at TIMESTAMP WITH TIME ZONE,
+  participants JSONB DEFAULT '[]'::jsonb,
+  results JSONB,
+  admin_user_id VARCHAR(255), -- The user who can start the battle
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create battle_participations table
+CREATE TABLE battle_participations (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  battle_id UUID REFERENCES battles(id) ON DELETE CASCADE,
+  user_id VARCHAR(255) NOT NULL, -- This will be your MongoDB user ID
+  placement INTEGER NOT NULL,
+  tests_passed INTEGER DEFAULT 0,
+  total_tests INTEGER DEFAULT 0,
+  score INTEGER DEFAULT 0,
+  completion_time INTEGER, -- in seconds or milliseconds
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create indexes for better performance
+CREATE INDEX idx_battles_room_id ON battles(room_id);
+CREATE INDEX idx_battles_status ON battles(status);
+CREATE INDEX idx_battle_participations_user_id ON battle_participations(user_id);
+CREATE INDEX idx_battle_participations_battle_id ON battle_participations(battle_id);
+CREATE INDEX idx_battle_participations_placement ON battle_participations(placement);
+
+-- Create a function to update the updated_at column
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Create trigger to automatically update updated_at
+CREATE TRIGGER update_battles_updated_at 
+  BEFORE UPDATE ON battles 
+  FOR EACH ROW 
+  EXECUTE FUNCTION update_updated_at_column();
+
+-- Create a view for easy battle statistics
+CREATE VIEW battle_stats AS
+SELECT 
+  bp.user_id,
+  COUNT(*) as total_battles,
+  COUNT(CASE WHEN bp.placement = 1 THEN 1 END) as wins,
+  COUNT(CASE WHEN bp.placement = 2 THEN 1 END) as second_place,
+  COUNT(CASE WHEN bp.placement = 3 THEN 1 END) as third_place,
+  AVG(bp.placement) as average_placement,
+  AVG(bp.tests_passed) as average_tests_passed,
+  MAX(bp.tests_passed) as best_score,
+  AVG(bp.completion_time) as average_completion_time
+FROM battle_participations bp
+JOIN battles b ON bp.battle_id = b.id
+WHERE b.status = 'completed'
+GROUP BY bp.user_id;
